@@ -1,6 +1,6 @@
 # Twitch URL Extractor
 
-A Golang package porting the Streamlink's Twitch URL extraction flow.
+A Golang package porting [Streamlink](https://github.com/streamlink/streamlink)'s Twitch URL extraction flow.
 
 It mirrors the important steps:
 
@@ -51,3 +51,8 @@ func main() {
 ```go
 source := streams["source"].URL
 ```
+
+
+## Notes
+
+Check [Streamlink](https://github.com/streamlink/streamlink) for more details on Twitch URL patterns, GraphQL queries, and HLS playlist parsing logic. This package focuses on the core URL extraction flow, without the additional features of Streamlink.
