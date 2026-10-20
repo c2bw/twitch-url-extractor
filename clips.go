@@ -54,7 +54,7 @@ func (c *Client) clipStreams(ctx context.Context, clipID string) (map[string]Str
 			continue
 		}
 		name := quality.Quality + "p"
-		if quality.FrameRate > 30 {
+		if quality.FrameRate > 0 {
 			name += strconv.Itoa(quality.FrameRate)
 		}
 		streams[name] = Stream{

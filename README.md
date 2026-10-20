@@ -46,10 +46,16 @@ func main() {
 }
 ```
 
-`Streams` accepts Twitch live channel, VOD, clip, and `player.twitch.tv` URLs. It returns a map keyed by quality name, such as `source`, `1080p60`, `720p`, or `audio_only`. Use `BestStream` to pick the highest-quality playable URL, or select a specific quality from the map:
+`Streams` accepts Twitch live channel, VOD, clip, and `player.twitch.tv` URLs. It returns a map keyed by quality name, such as `1440p60`, `1080p60`, `720p60`, `1920p60_portrait`, `source`, or `audio_only`. Use `BestStream` to pick the highest-quality playable landscape URL, or select a specific quality from the map:
 
 ```go
-source := streams["source"].URL
+stream := streams["1080p60"].URL
+```
+
+To enable higher-quality HEVC/AV1 streams (such as `1440p60`), configure `SupportedCodecs` on `Client`:
+
+```go
+client.SupportedCodecs = []string{"h264", "h265", "av1"}
 ```
 
 
