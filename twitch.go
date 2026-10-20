@@ -16,10 +16,16 @@ import (
 	"time"
 )
 
-const twitchClientID = "kimne78kx3ncx6brgo4mv6wki5h1ko"
+const (
+	twitchClientID   = "kimne78kx3ncx6brgo4mv6wki5h1ko"
+	defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:157.0) Gecko/20100101 Firefox/157.0"
+)
 
 type Client struct {
 	http *http.Client
+	// SupportedCodecs signals codec preferences to Usher (e.g. []string{"h264", "h265", "av1"}).
+	// Defaults to []string{"h264"} when empty.
+	SupportedCodecs []string
 }
 
 type Stream struct {
@@ -170,7 +176,7 @@ func (c *Client) liveStreams(ctx context.Context, channel string) (map[string]St
 		return nil, err
 	}
 
-	playlistURL := usherURL(
+	playlistURL := c.usherURL(
 		fmt.Sprintf("/api/v2/channel/hls/%s.m3u8", strings.ToLower(channel)),
 		map[string]string{
 			"sig":        token.Signature,
@@ -179,7 +185,11 @@ func (c *Client) liveStreams(ctx context.Context, channel string) (map[string]St
 		},
 	)
 
-	return c.hlsStreams(ctx, playlistURL, 0)
+	headers := map[string]string{
+		"Referer": "https://player.twitch.tv",
+		"Origin":  "https://player.twitch.tv",
+	}
+	return c.hlsStreams(ctx, playlistURL, 0, headers)
 }
 
 func (c *Client) videoStreams(ctx context.Context, videoID string, offset time.Duration) (map[string]Stream, error) {
@@ -188,7 +198,7 @@ func (c *Client) videoStreams(ctx context.Context, videoID string, offset time.D
 		return nil, err
 	}
 
-	playlistURL := usherURL(
+	playlistURL := c.usherURL(
 		fmt.Sprintf("/vod/v2/%s.m3u8", videoID),
 		map[string]string{
 			"nauthsig": token.Signature,
@@ -196,13 +206,17 @@ func (c *Client) videoStreams(ctx context.Context, videoID string, offset time.D
 		},
 	)
 
-	return c.hlsStreams(ctx, playlistURL, offset)
+	return c.hlsStreams(ctx, playlistURL, offset, nil)
 }
 
-func (c *Client) hlsStreams(ctx context.Context, playlistURL string, offset time.Duration) (map[string]Stream, error) {
+func (c *Client) hlsStreams(ctx context.Context, playlistURL string, offset time.Duration, headers map[string]string) (map[string]Stream, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, playlistURL, nil)
 	if err != nil {
 		return nil, err
+	}
+	req.Header.Set("User-Agent", defaultUserAgent)
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 
 	res, err := c.http.Do(req)
@@ -222,14 +236,27 @@ func (c *Client) hlsStreams(ctx context.Context, playlistURL string, offset time
 	return parseVariantPlaylist(playlistURL, string(body), offset), nil
 }
 
+func (c *Client) usherURL(endpoint string, extra map[string]string) string {
+	codecs := "h264"
+	if len(c.SupportedCodecs) > 0 {
+		codecs = strings.Join(c.SupportedCodecs, ",")
+	}
+	return usherURLWithCodecs(endpoint, codecs, extra)
+}
+
 func usherURL(endpoint string, extra map[string]string) string {
+	return usherURLWithCodecs(endpoint, "h264", extra)
+}
+
+func usherURLWithCodecs(endpoint, codecs string, extra map[string]string) string {
 	values := url.Values{
 		"platform":                   {"web"},
 		"p":                          {fmt.Sprint(rand.Intn(999999))},
 		"allow_source":               {"true"},
 		"allow_audio_only":           {"true"},
 		"playlist_include_framerate": {"true"},
-		"supported_codecs":           {"h264"},
+		"multigroup_video":           {"true"},
+		"supported_codecs":           {codecs},
 	}
 	for key, value := range extra {
 		values.Set(key, value)
@@ -277,6 +304,8 @@ func (c *Client) accessToken(ctx context.Context, isLive bool, channelOrVod stri
 		Errors []struct {
 			Message string `json:"message"`
 		} `json:"errors"`
+		Error   string `json:"error"`
+		Message string `json:"message"`
 	}
 
 	if err := c.postGQL(ctx, payload, &response); err != nil {
@@ -284,6 +313,12 @@ func (c *Client) accessToken(ctx context.Context, isLive bool, channelOrVod stri
 	}
 	if len(response.Errors) > 0 {
 		return playbackToken{}, errors.New(response.Errors[0].Message)
+	}
+	if response.Error != "" || response.Message != "" {
+		if response.Error != "" && response.Message != "" {
+			return playbackToken{}, fmt.Errorf("%s: %s", response.Error, response.Message)
+		}
+		return playbackToken{}, errors.New(response.Error + response.Message)
 	}
 
 	var sig, value string
@@ -314,7 +349,7 @@ func (c *Client) postGQL(ctx context.Context, payload any, out any) error {
 	}
 	req.Header.Set("Client-ID", twitchClientID)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "Mozilla/5.0")
+	req.Header.Set("User-Agent", defaultUserAgent)
 
 	res, err := c.http.Do(req)
 	if err != nil {

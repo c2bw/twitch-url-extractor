@@ -15,7 +15,8 @@ var (
 	resolutionRE = regexp.MustCompile(`RESOLUTION=\d+x(\d+)`)
 	frameRateRE  = regexp.MustCompile(`FRAME-RATE=([0-9.]+)`)
 	bandwidthRE  = regexp.MustCompile(`BANDWIDTH=(\d+)`)
-	qualityRE    = regexp.MustCompile(`(\d+)p(?:(\d+))?`)
+	qualityRE    = regexp.MustCompile(`^(\d+)p(?:(\d+))?$`)
+	altRE        = regexp.MustCompile(`_alt(\d*)$`)
 	offsetRE     = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)(h|m|s)`)
 )
 
@@ -66,6 +67,27 @@ func parseAttrs(value string) map[string]string {
 
 func streamName(streamInf string, mediaNames map[string]string) string {
 	attrs := parseAttrs(streamInf)
+	pixelsWithFPS := pixelsName(streamInf, true)
+	variantID := strings.ToLower(attrs["STABLE-VARIANT-ID"])
+	ivsGroups := strings.ToLower(attrs["IVS-GROUPS"])
+
+	if pixelsWithFPS != "" && ivsGroups == "portrait" {
+		return pixelsWithFPS + "_portrait"
+	}
+	if strings.HasPrefix(variantID, "audio") {
+		return "audio_only"
+	}
+	if variantID != "" {
+		return variantID
+	}
+	if ivsName := attrs["IVS-NAME"]; ivsName != "" {
+		lowerIVS := strings.ToLower(ivsName)
+		if lowerIVS == "audio_only" || lowerIVS == "audio" || lowerIVS == "audio only" {
+			return "audio_only"
+		}
+		return ivsName
+	}
+
 	if video := attrs["VIDEO"]; video != "" {
 		if name := mediaNames[video]; name != "" {
 			if strings.EqualFold(name, "audio") {
@@ -84,14 +106,7 @@ func streamName(streamInf string, mediaNames map[string]string) string {
 		}
 	}
 
-	if match := resolutionRE.FindStringSubmatch(streamInf); match != nil {
-		name := match[1] + "p"
-		if fpsMatch := frameRateRE.FindStringSubmatch(streamInf); fpsMatch != nil {
-			fps, _ := strconv.ParseFloat(fpsMatch[1], 64)
-			if fps > 30 {
-				name += fmt.Sprint(int(math.Ceil(fps)))
-			}
-		}
+	if name := pixelsName(streamInf, false); name != "" {
 		return name
 	}
 
@@ -104,6 +119,21 @@ func streamName(streamInf string, mediaNames map[string]string) string {
 	}
 
 	return ""
+}
+
+func pixelsName(streamInf string, forceFramerate bool) string {
+	match := resolutionRE.FindStringSubmatch(streamInf)
+	if match == nil || match[1] == "0" {
+		return ""
+	}
+	name := match[1] + "p"
+	if fpsMatch := frameRateRE.FindStringSubmatch(streamInf); fpsMatch != nil {
+		fps, err := strconv.ParseFloat(fpsMatch[1], 64)
+		if err == nil && (forceFramerate || fps > 30) {
+			name += fmt.Sprint(int(math.Ceil(fps)))
+		}
+	}
+	return name
 }
 
 func uniqueName(streams map[string]Stream, name string) string {
@@ -171,22 +201,44 @@ func parseOffset(value string) time.Duration {
 }
 
 func streamWeight(name string) int {
-	if name == "source" {
-		return 1_000_000
-	}
 	if strings.HasPrefix(name, "audio") {
 		return 0
 	}
-	if match := qualityRE.FindStringSubmatch(name); match != nil {
+
+	baseName := name
+	altPenalty := 0
+	if match := altRE.FindStringSubmatch(baseName); match != nil {
+		altPenalty = 1
+		if match[1] != "" {
+			if n, err := strconv.Atoi(match[1]); err == nil && n > 0 {
+				altPenalty = n
+			}
+		}
+		baseName = baseName[:len(baseName)-len(match[0])]
+	}
+
+	isPortrait := strings.HasSuffix(baseName, "_portrait")
+	baseName = strings.TrimSuffix(baseName, "_portrait")
+
+	weight := 10
+	switch {
+	case baseName == "source":
+		weight = 90_000_000
+	case qualityRE.MatchString(baseName):
+		match := qualityRE.FindStringSubmatch(baseName)
 		height, _ := strconv.Atoi(match[1])
 		fps, _ := strconv.Atoi(match[2])
-		return height*1000 + fps
+		weight = (height*1000 + fps) * 10
+	case strings.HasSuffix(baseName, "k"):
+		f, _ := strconv.ParseFloat(strings.TrimSuffix(baseName, "k"), 64)
+		weight = int(f) * 10
 	}
-	if strings.HasSuffix(name, "k") {
-		n, _ := strconv.Atoi(strings.TrimSuffix(name, "k"))
-		return n
+
+	weight -= altPenalty
+	if isPortrait {
+		return weight
 	}
-	return 1
+	return 100_000_000 + weight
 }
 
 func BestStream(streams map[string]Stream) (Stream, bool) {
@@ -198,7 +250,7 @@ func BestStream(streams map[string]Stream) (Stream, bool) {
 			continue
 		}
 		weight := streamWeight(name)
-		if !ok || weight > bestWeight {
+		if !ok || weight > bestWeight || (weight == bestWeight && name < best.Name) {
 			best = stream
 			ok = true
 			bestWeight = weight

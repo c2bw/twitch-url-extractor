@@ -72,3 +72,21 @@ func TestParseTwitchURL(t *testing.T) {
 		})
 	}
 }
+
+func TestUsherURL(t *testing.T) {
+	client := NewClient(nil)
+	client.SupportedCodecs = []string{"h264", "h265", "av1"}
+
+	rawURL := client.usherURL("/api/v2/channel/hls/example.m3u8", map[string]string{
+		"sig":        "sig123",
+		"token":      "tok123",
+		"fast_bread": "true",
+	})
+	q := mustQuery(t, rawURL)
+	if got := q.Get("multigroup_video"); got != "true" {
+		t.Fatalf("multigroup_video = %q, want true", got)
+	}
+	if got := q.Get("supported_codecs"); got != "h264,h265,av1" {
+		t.Fatalf("supported_codecs = %q, want h264,h265,av1", got)
+	}
+}
