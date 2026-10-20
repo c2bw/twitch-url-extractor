@@ -58,6 +58,18 @@ To enable higher-quality HEVC/AV1 streams (such as `1440p60`), configure `Suppor
 client.SupportedCodecs = []string{"h264", "h265", "av1"}
 ```
 
+## CLI & Benchmark Mode
+
+You can extract stream URLs or benchmark extraction latency (min, avg, stddev, p50, p90, p95, p99, max) directly from the command line:
+
+```bash
+# Extract stream URLs
+go run ./cmd/twitch-url-extractor https://www.twitch.tv/example_channel
+
+# Benchmark URL extraction latency (default 10 iterations + 1 warmup)
+go run ./cmd/twitch-url-extractor --benchmark -n 20 https://www.twitch.tv/example_channel
+```
+
 
 ## Notes
 
